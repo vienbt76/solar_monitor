@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATS Solar - Bao Mat</title>
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        body { background: #0b0f19; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+        .container { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 12px; }
+        
+        #auth-screen { background: #111827; border: 1px solid #1f2937; border-radius: 20px; padding: 24px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        #auth-screen h2 { font-size: 18px; margin-bottom: 16px; color: #60a5fa; }
+        #auth-screen input { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #374151; background: #1f2937; color: #fff; font-size: 16px; margin-bottom: 12px; outline: none; }
+        #auth-screen button { width: 100%; padding: 12px; border-radius: 12px; border: none; background: #2563eb; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; }
+        #auth-screen button:active { transform: scale(0.98); }
+        .error-msg { color: #ef4444; font-size: 12px; margin-top: 8px; display: none; }
+
+        #main-app { display: none; flex-direction: column; gap: 12px; width: 100%; }
+
+        .header-card { background: #111827; border: 1px solid #1f2937; border-radius: 20px; padding: 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .header-title { font-size: 13px; font-weight: 800; color: #f8fafc; letter-spacing: 0.5px; }
+        .status-badge { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 8px #ef4444; transition: 0.3s; }
+        .status-badge.connected { background: #10b981; box-shadow: 0 0 10px #10b981; }
+
+        .card { background: #111827; border: 1px solid #1f2937; border-radius: 20px; padding: 18px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; justify-content: space-between; align-items: center; }
+        .card-info .label { font-size: 11px; font-weight: 700; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px; }
+        .card-info .value { font-size: 26px; font-weight: 800; color: #f8fafc; }
+        .card-info .value span { font-size: 14px; color: #fbbf24; font-weight: 600; }
+        
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .small-card { background: #111827; border: 1px solid #1f2937; border-radius: 16px; padding: 14px; }
+        .small-card .label { font-size: 10px; font-weight: 700; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px; }
+        .small-card .value { font-size: 18px; font-weight: 800; color: #34d399; }
+
+        .control-card { background: #111827; border: 1px solid #1f2937; border-radius: 20px; padding: 16px; display: flex; justify-content: space-between; align-items: center; }
+        .control-label { font-size: 12px; font-weight: 700; color: #f8fafc; }
+
+        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #374151; transition: .3s; border-radius: 28px; }
+        .slider:before { position: absolute; content: ""; height: 22px; width: 22px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #10b981; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="auth-screen">
+        <h2>XAC THUC HE THONG ATS</h2>
+        <input type="password" id="passInput" placeholder="Nhap mat khau quan tri..." onkeydown="if(event.key === 'Enter') checkPassword()">
+        <button onclick="checkPassword()">Truy Cap</button>
+        <div id="errorMsg" class="error-msg">Sai mat khau, vui long thu lai!</div>
+    </div>
+
+    <div id="main-app">
+        <div class="header-card">
+            <div class="header-title">ATS SOLAR - SAU VIEN</div>
+            <div id="connStatus" class="status-badge" title="Trang thai MQTT"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-info">
+                <div class="label">NHIET DO CHIP ESP32</div>
+                <div class="value" id="chipTemp">-- <span>C</span></div>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div class="small-card">
+                <div class="label">NGAY HOM NAY</div>
+                <div class="value" id="dateStr" style="font-size: 13px; color: #60a5fa;">--</div>
+            </div>
+            <div class="small-card">
+                <div class="label">GIO HE THONG</div>
+                <div class="value" id="timeStr" style="font-size: 14px; color: #f43f5e;">--:--:--</div>
+            </div>
+        </div>
+
+        <div class="control-card">
+            <div class="control-label">NLMT (KDT 1)</div>
+            <label class="switch">
+                <input type="checkbox" id="r1Toggle" onclick="toggleRelay('r1', this)">
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <div class="control-card">
+            <div class="control-label">DIEN LUOI (KDT 2)</div>
+            <label class="switch">
+                <input type="checkbox" id="r2Toggle" onclick="toggleRelay('r2', this)">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+</div>
+
+<script>
+    const ADMIN_PASSWORD = "888888";
+
+    function checkPassword() {
+        const inputVal = document.getElementById('passInput').value;
+        if (inputVal === ADMIN_PASSWORD) {
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('main-app').style.display = 'flex';
+            initMqtt();
+        } else {
+            const errEl = document.getElementById('errorMsg');
+            errEl.style.display = 'block';
+            document.getElementById('passInput').value = '';
+        }
+    }
+
+    function initMqtt() {
+        const MQTT_BROKER = "wss://771142efdaed453eb9cc0bb2d0d99f09.s1.eu.hivemq.cloud:8884/mqtt";
+        const MQTT_USER = "esp32_user";
+        const MQTT_PASS = "Solar123456";
+
+        const client = mqtt.connect(MQTT_BROKER, {
+            clientId: "WebDashboard_" + Math.random().toString(16).substring(2, 8),
+            username: MQTT_USER,
+            password: MQTT_PASS,
+            clean: true
+        });
+
+        const statusBadge = document.getElementById('connStatus');
+        const chipTempEl = document.getElementById('chipTemp');
+        const dateStrEl = document.getElementById('dateStr');
+        const timeStrEl = document.getElementById('timeStr');
+        const r1Toggle = document.getElementById('r1Toggle');
+        const r2Toggle = document.getElementById('r2Toggle');
+
+        client.on('connect', () => {
+            statusBadge.classList.add('connected');
+            client.subscribe("solar/data");
+        });
+
+        client.on('offline', () => {
+            statusBadge.classList.remove('connected');
+        });
+
+        client.on('error', (err) => {
+            statusBadge.classList.remove('connected');
+        });
+
+        client.on('message', (topic, payload) => {
+            if (topic === "solar/data") {
+                try {
+                    const data = JSON.parse(payload.toString());
+                    chipTempEl.innerHTML = data.temp.toFixed(1) + " <span>C</span>";
+                    dateStrEl.innerText = data.date;
+                    timeStrEl.innerText = data.time;
+                    r1Toggle.checked = data.r1;
+                    r2Toggle.checked = data.r2;
+                } catch (e) {}
+            }
+        });
+
+        window.toggleRelay = function(relay, element) {
+            const command = element.checked ? "1" : "0";
+            const topic = "solar/cmd/" + relay;
+            client.publish(topic, command, { qos: 0 }, (err) => {
+                if (err) {
+                    element.checked = !element.checked;
+                }
+            });
+        }
+    }
+</script>
+
+</body>
+</html>
